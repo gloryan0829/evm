@@ -51,7 +51,8 @@ func NewAvailableStaticPrecompiles(
 
 	// secp256r1 precompile as per EIP-7212
 	p256Precompile := &p256.Precompile{}
-
+	
+ 	// [checkpoint] : bech32 precompile to be used
 	bech32Precompile, err := bech32.NewPrecompile(bech32PrecompileBaseGas)
 	if err != nil {
 		panic(fmt.Errorf("failed to instantiate bech32 precompile: %w", err))

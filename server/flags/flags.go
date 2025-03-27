@@ -61,7 +61,7 @@ const (
 // EVM flags
 const (
 	EVMTracer         = "evm.tracer"
-	EVMMaxTxGasWanted = "evm.max-tx-gas-wanted"
+	EVMMaxTxGasWanted = "evm.max-tx-gas-wanted" // [checkpoint] : evm max tx gas wanted to be used
 )
 
 // TLS flags

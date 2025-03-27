@@ -10,7 +10,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/migrations/legacytx"
 	"github.com/cosmos/cosmos-sdk/x/auth/tx"
 	enccodec "github.com/cosmos/evm/encoding/codec"
-	"github.com/cosmos/evm/ethereum/eip712"
+	"github.com/cosmos/evm/ethereum/eip712" // [checkpoint] : eip712 to be used
 	erc20types "github.com/cosmos/evm/x/erc20/types"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/cosmos/gogoproto/proto"
@@ -44,7 +44,7 @@ func MakeConfig() sdktestutil.TestEncodingConfig {
 	// This is needed for the EIP712 txs because currently is using
 	// the deprecated method legacytx.StdSignBytes
 	legacytx.RegressionTestingAminoCodec = cdc
-	eip712.SetEncodingConfig(cdc, interfaceRegistry)
+	eip712.SetEncodingConfig(cdc, interfaceRegistry) // [checkpoint] : eip712 to be used
 
 	return sdktestutil.TestEncodingConfig{
 		InterfaceRegistry: interfaceRegistry,

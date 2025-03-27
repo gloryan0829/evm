@@ -85,6 +85,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/staking"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+
+	// [checkpoint] : evm module to be used
 	evmante "github.com/cosmos/evm/ante"
 	cosmosevmante "github.com/cosmos/evm/ante/evm"
 	evmosencoding "github.com/cosmos/evm/encoding"
@@ -102,6 +104,7 @@ import (
 	corevm "github.com/cosmos/evm/x/vm/core/vm"
 	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/cosmos/ibc-go/modules/capability"
 	capabilitykeeper "github.com/cosmos/ibc-go/modules/capability/keeper"
@@ -129,7 +132,7 @@ import (
 
 func init() {
 	// manually update the power reduction by replacing micro (u) -> atto (a) evmos
-	sdk.DefaultPowerReduction = cosmosevmtypes.AttoPowerReduction
+	sdk.DefaultPowerReduction = cosmosevmtypes.AttoPowerReduction // [checkpoint] : atto (a) power reduction to be used
 
 	// get the user's home directory
 	var err error
@@ -158,7 +161,7 @@ var (
 		// Cosmos EVM modules
 		evmtypes.ModuleName:       {authtypes.Minter, authtypes.Burner},
 		feemarkettypes.ModuleName: nil,
-		erc20types.ModuleName:     {authtypes.Minter, authtypes.Burner},
+		erc20types.ModuleName:     {authtypes.Minter, authtypes.Burner}, // [checkpoint] : erc20 module to be used
 	}
 )
 
@@ -207,8 +210,8 @@ type ExampleChain struct {
 
 	// Cosmos EVM keepers
 	FeeMarketKeeper feemarketkeeper.Keeper
-	EVMKeeper       *evmkeeper.Keeper
-	Erc20Keeper     erc20keeper.Keeper
+	EVMKeeper       *evmkeeper.Keeper // [checkpoint] : evm keeper to be used
+	Erc20Keeper     erc20keeper.Keeper // [checkpoint] : erc20 keeper to be used
 
 	// the module manager
 	ModuleManager      *module.Manager
@@ -231,7 +234,7 @@ func NewExampleApp(
 	EvmAppOptions EVMOptionsFn,
 	baseAppOptions ...func(*baseapp.BaseApp),
 ) *ExampleChain {
-	encodingConfig := evmosencoding.MakeConfig()
+	encodingConfig := evmosencoding.MakeConfig() // [checkpoint] : evm encoding config to be used
 
 	appCodec := encodingConfig.Codec
 	legacyAmino := encodingConfig.Amino
@@ -290,10 +293,11 @@ func NewExampleApp(
 		authzkeeper.StoreKey,
 		// ibc keys
 		ibcexported.StoreKey, ibctransfertypes.StoreKey,
-		// Cosmos EVM store keys
+		// Cosmos EVM store keys 
+		// [checkpoint] : evm store keys to be used
 		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey,
 	)
-
+	// [checkpoint] : transient store keys to be used
 	tkeys := storetypes.NewTransientStoreKeys(paramstypes.TStoreKey, evmtypes.TransientKey, feemarkettypes.TransientKey)
 	memKeys := storetypes.NewMemoryStoreKeys(capabilitytypes.MemStoreKey)
 
@@ -492,8 +496,9 @@ func NewExampleApp(
 	)
 
 	// Set up EVM keeper
-	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
+	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer)) // [checkpoint] : evm tracer to be used
 
+	// [check point] 2. Initialize EVM keeper & setup it to the app
 	// NOTE: it's required to set up the EVM keeper before the ERC-20 keeper, because it is used in its instantiation.
 	app.EVMKeeper = evmkeeper.NewKeeper(
 		// TODO: check why this is not adjusted to use the runtime module methods like SDK native keepers
@@ -507,6 +512,7 @@ func NewExampleApp(
 		tracer, app.GetSubspace(evmtypes.ModuleName),
 	)
 
+	// [check point] 2. Initialize Erc20 keeper & setup it to the app
 	app.Erc20Keeper = erc20keeper.NewKeeper(
 		keys[erc20types.StoreKey],
 		appCodec,
@@ -550,7 +556,7 @@ func NewExampleApp(
 	var transferStack porttypes.IBCModule
 
 	transferStack = transfer.NewIBCModule(app.TransferKeeper)
-	transferStack = erc20.NewIBCMiddleware(app.Erc20Keeper, transferStack)
+	transferStack = erc20.NewIBCMiddleware(app.Erc20Keeper, transferStack) // [checkpoint] : erc20 ibc middleware to be used
 
 	// Create static IBC router, add transfer route, then set and seal it
 	ibcRouter := porttypes.NewRouter()
@@ -560,7 +566,8 @@ func NewExampleApp(
 
 	// NOTE: we are adding all available Cosmos EVM EVM extensions.
 	// Not all of them need to be enabled, which can be configured on a per-chain basis.
-	app.EVMKeeper.WithStaticPrecompiles(
+	// [checkpoint] : evm static precompiles to be used
+	app.EVMKeeper.WithStaticPrecompiles( 
 		NewAvailableStaticPrecompiles(
 			*app.StakingKeeper,
 			app.DistrKeeper,
@@ -741,7 +748,7 @@ func NewExampleApp(
 	app.MountTransientStores(tkeys)
 	app.MountMemoryStores(memKeys)
 
-	maxGasWanted := cast.ToUint64(appOpts.Get(srvflags.EVMMaxTxGasWanted))
+	maxGasWanted := cast.ToUint64(appOpts.Get(srvflags.EVMMaxTxGasWanted)) // [checkpoint] : evm max tx gas wanted to be used
 
 	// initialize BaseApp
 	app.SetInitChainer(app.InitChainer)
@@ -795,25 +802,26 @@ func NewExampleApp(
 }
 
 func (app *ExampleChain) setAnteHandler(txConfig client.TxConfig, maxGasWanted uint64) {
+	// [checkpoint] : antehandler options to be used
 	options := chainante.HandlerOptions{
 		Cdc:                    app.appCodec,
 		AccountKeeper:          app.AccountKeeper,
 		BankKeeper:             app.BankKeeper,
-		ExtensionOptionChecker: cosmosevmtypes.HasDynamicFeeExtensionOption,
+		ExtensionOptionChecker: cosmosevmtypes.HasDynamicFeeExtensionOption, // [checkpoint] : dynamic fee extension option to be used
 		EvmKeeper:              app.EVMKeeper,
 		FeegrantKeeper:         app.FeeGrantKeeper,
 		IBCKeeper:              app.IBCKeeper,
 		FeeMarketKeeper:        app.FeeMarketKeeper,
 		SignModeHandler:        txConfig.SignModeHandler(),
-		SigGasConsumer:         evmante.SigVerificationGasConsumer,
+		SigGasConsumer:         evmante.SigVerificationGasConsumer, // [checkpoint] : sigverify antehandler to be used
 		MaxTxGasWanted:         maxGasWanted,
-		TxFeeChecker:           cosmosevmante.NewDynamicFeeChecker(app.FeeMarketKeeper),
+		TxFeeChecker:           cosmosevmante.NewDynamicFeeChecker(app.FeeMarketKeeper), // [checkpoint] : dynamic fee antehandler to be used
 	}
 	if err := options.Validate(); err != nil {
 		panic(err)
 	}
 
-	app.SetAnteHandler(chainante.NewAnteHandler(options))
+	app.SetAnteHandler(chainante.NewAnteHandler(options)) // [checkpoint 2] : new antehandler to be used for abci checkTx and deliverTx
 }
 
 func (app *ExampleChain) setPostHandler() {
@@ -1075,10 +1083,10 @@ func BlockedAddresses() map[string]bool {
 	blockedPrecompilesHex := evmtypes.AvailableStaticPrecompiles
 	for _, addr := range corevm.PrecompiledAddressesBerlin {
 		blockedPrecompilesHex = append(blockedPrecompilesHex, addr.Hex())
-	}
+	}\
 
 	for _, precompile := range blockedPrecompilesHex {
-		blockedAddrs[cosmosevmutils.EthHexToCosmosAddr(precompile).String()] = true
+		blockedAddrs[cosmosevmutils.EthHexToCosmosAddr(precompile).String()] = true // [checkpoint] : blocked precompiles to be used
 	}
 
 	return blockedAddrs
