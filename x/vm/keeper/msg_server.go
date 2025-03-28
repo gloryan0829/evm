@@ -39,6 +39,7 @@ func (k *Keeper) EthereumTx(goCtx context.Context, msg *types.MsgEthereumTx) (*t
 		labels = append(labels, telemetry.NewLabel("execution", "call"))
 	}
 
+	// 1. 시작점 -> ApplyTransaction 호출
 	response, err := k.ApplyTransaction(ctx, tx)
 	if err != nil {
 		return nil, errorsmod.Wrap(err, "failed to apply transaction")

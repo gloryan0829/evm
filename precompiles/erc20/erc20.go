@@ -130,10 +130,13 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 	// EOA and will not be possible to recover funds sent to an instance of
 	// them.This check is a safety measure because currently funds cannot be
 	// received due to the lack of a fallback handler.
+	// 9.4 Precompiled 된 컨트랙트는 토큰을 받을 수 없음. 그리고 찾을 수도 없음. EOA 에서 관리되는 것이 아니기 때문..
+	// 이에 대한 예외 처리
 	if value := contract.Value(); value.Sign() == 1 {
 		return nil, fmt.Errorf(ErrCannotReceiveFunds, contract.Value().String())
 	}
 
+	// 9.5 컨트랙트 실행 준비
 	ctx, stateDB, snapshot, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
 	if err != nil {
 		return nil, err
@@ -143,13 +146,17 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 	// It avoids panics and returns the out of gas error so the EVM can continue gracefully.
 	defer cmn.HandleGasError(ctx, contract, initialGas, &err)()
 
+	// 9.6 컨트랙트 실행하게 되는데 Input Bytes 값애서 추출된 method, args 를 넘겨 함수(인자 포함) 을 호출하게 됨. 
+	// 만약 성공이라면 true 값이 바이트 배열로 나옴
 	bz, err = p.HandleMethod(ctx, contract, stateDB, method, args)
 	if err != nil {
 		return nil, err
 	}
 
+	// 9.7 컨트랙트 실행 시 소모된 가스 계산
 	cost := ctx.GasMeter().GasConsumed() - initialGas
 
+	// 9.8 컨트랙트 실행 후 소모된 가스가 남아있는지 확인
 	if !contract.UseGas(cost) {
 		return nil, vm.ErrOutOfGas
 	}

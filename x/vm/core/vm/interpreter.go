@@ -126,13 +126,19 @@ func (in *EVMInterpreter) SetReturnData(data []byte) {
 // It's important to note that any errors returned by the interpreter should be
 // considered a revert-and-consume-all-gas operation except for
 // ErrExecutionReverted which means revert-and-keep-gas-left.
+// 6.1 컨트랙트 코드를 실행하는 함수
+// arg0 - contract: 실행할 바이트코드와 상태 포함
+// arg1 - input: 트랜잭션 또는 함수 호출에 전달된 파라미터
+// arg2 - readOnly: 상태를 변경하지 않는 호출 여부 (e.g. eth_call) 
 func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (ret []byte, err error) {
 	// Increment the call depth which is restricted to 1024
+	// 6.2 컨트랙트 호출 시 최대 깊이를 1024 로 제한함
 	in.evm.depth++
 	defer func() { in.evm.depth-- }()
 
 	// Make sure the readOnly is only set if we aren't in readOnly yet.
 	// This also makes sure that the readOnly flag isn't removed for child calls.
+	// 6.2 상위 컨텍스트가 readOnly인 경우 자식도 readOnly로 고정됨 ( eth_call )
 	if readOnly && !in.readOnly {
 		in.readOnly = true
 		defer func() { in.readOnly = false }()
@@ -140,18 +146,22 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 
 	// Reset the previous call's return data. It's unimportant to preserve the old buffer
 	// as every returning call will return new data anyway.
+	// 6.3 이전 트랜잭션의 결과값 초기화
 	in.returnData = nil
 
 	// Don't bother with the execution if there's no code.
+	// 6.4 코드가 없으면 실행하지 않음
 	if len(contract.Code) == 0 {
 		return nil, nil
 	}
 
+	// 6.5 Memory: EVM이 메모리, Stack: 스택 초기화
 	mem := NewMemory()       // bound memory
 	stack, err := NewStack() // local stack
 	if err != nil {
 		return nil, err
 	}
+	// 6.6 메모리와 스택을 포함한 현재 스코프의 상태 저장
 	callContext := &ScopeContext{
 		Memory:   mem,
 		Stack:    stack,
@@ -192,6 +202,8 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	// explicit STOP, RETURN or SELFDESTRUCT is executed, an error occurred during
 	// the execution of one of the operations or until the done flag is set by the
 	// parent context.
+	// 6.7 실질적인 EVM 실행 루프를 다루는 코드이며, 
+	// STOP, RETURN, SELFDESTRUCT 또는 오류가 발생할 때까지 실행됨
 	for {
 		if in.cfg.Debug {
 			// Capture pre-execution values for tracing.
@@ -199,18 +211,21 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		}
 		// Get the operation from the jump table and validate the stack to ensure there are
 		// enough stack items available to perform the operation.
-		op = contract.GetOp(pc)
-		operation := in.cfg.JumpTable[op]
-		cost = operation.constantGas // For tracing
+		op = contract.GetOp(pc) // 6.8 opcode 가져오기
+		operation := in.cfg.JumpTable[op] // 6.9 opcode 실행 함수 가져오기
+		cost = operation.constantGas // For tracing // 6.10 해당 opcode 실행 비용 가져오기
 		// Validate stack
+		// 6.11 해당 opcode 실행을 위해 스택 길이가 충분한지 확인
 		if sLen := stack.Len(); sLen < operation.minStack {
 			return nil, &ErrStackUnderflow{stackLen: sLen, required: operation.minStack}
 		} else if sLen > operation.maxStack {
 			return nil, &ErrStackOverflow{stackLen: sLen, limit: operation.maxStack}
 		}
+		// 6.12 해당 opcode 실행 비용 차감 및 체크 => 만약 가스가 부족하면 ErrOutOfGas 반환
 		if !contract.UseGas(cost) {
 			return nil, ErrOutOfGas
 		}
+		// 6.13 일부 opcode는 입력값에 따라 가스 비용이 동적으로 계산됨 예: CALL, EXP, MSTORE, LOGx 등
 		if operation.dynamicGas != nil {
 			// All ops with a dynamic memory usage also has a dynamic gas cost.
 			var memorySize uint64
@@ -231,8 +246,10 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			}
 			// Consume the gas and return an error if not enough gas is available.
 			// cost is explicitly set so that the capture state defer method can get the proper cost
+			// 6.14 동적 가스 비용 계산
 			var dynamicCost uint64
 			dynamicCost, err = operation.dynamicGas(in.evm, contract, stack, mem, memorySize)
+			// 6.15 동적 가스 비용 차감 및 체크 만약 가스가 부족하면 ErrOutOfGas 반환
 			cost += dynamicCost // for tracing
 			if err != nil || !contract.UseGas(dynamicCost) {
 				return nil, ErrOutOfGas
@@ -249,6 +266,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			in.cfg.Tracer.CaptureState(pc, op, gasCopy, cost, callContext, in.returnData, in.evm.depth, err)
 			logged = true
 		}
+		// 6.16 가장 핵심! → OpCode 별 동작 수행 ( 예: ADD, SLOAD, CALL, RETURN, REVERT 등
 		// execute the operation
 		res, err = operation.execute(&pc, in, callContext)
 		if err != nil {
@@ -257,6 +275,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		pc++
 	}
 
+	// 6.17 [6.16] operation.execute 에서 STOP, RETURN, SELFDESTRUCT 등 호출되면 정상 처리
 	if err == errStopToken {
 		err = nil // clear stop token error
 	}

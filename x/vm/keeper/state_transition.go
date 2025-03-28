@@ -36,29 +36,34 @@ func (k *Keeper) NewEVM(
 	tracer vm.EVMLogger,
 	stateDB vm.StateDB,
 ) *vm.EVM {
+	// 3.3 블록 컨텍스트 생성
 	blockCtx := vm.BlockContext{
-		CanTransfer: evmcore.CanTransfer,
-		Transfer:    evmcore.Transfer,
-		GetHash:     k.GetHashFn(ctx),
-		Coinbase:    cfg.CoinBase,
-		GasLimit:    cosmosevmtypes.BlockGasLimit(ctx),
+		CanTransfer: evmcore.CanTransfer, // 토큰 전송 가능 여부 함수
+		Transfer:    evmcore.Transfer, // 토큰 전송 함수
+		GetHash:     k.GetHashFn(ctx), // 블록 해시 함수
+		Coinbase:    cfg.CoinBase, // 코인베이스 주소 - 마이닝 매커니증 X -> Cosmos Validator (Proposer) Hex 로 된 주소를 넣어줌. Coinbase opcode 에서 사용됨
+		GasLimit:    cosmosevmtypes.BlockGasLimit(ctx), // 블록 가스 한도 (컨센서스 파라미터 설정된 값으로 사용됨 config 에서 가져옴)
 		BlockNumber: big.NewInt(ctx.BlockHeight()),
 		Time:        big.NewInt(ctx.BlockHeader().Time.Unix()),
-		Difficulty:  big.NewInt(0), // unused. Only required in PoW context
-		BaseFee:     cfg.BaseFee,
-		Random:      nil, // not supported
-	}
+		Difficulty:  big.NewInt(0), // 사용 안함 - PoW 아님
+		BaseFee:     cfg.BaseFee, // 기본 수수료 0.1 gwei
+		Random:      nil, // 사용안함 - 구현되어있지 않음
 
+	}
+	// 3.4 트랜잭션 컨텍스트 생성
 	txCtx := evmcore.NewEVMTxContext(msg)
 	if tracer == nil {
 		tracer = k.Tracer(ctx, msg, cfg.ChainConfig)
 	}
+	// EVM Interpreter의 세부 설정 구조체
+	// JumpTable (opcode 테이블)
 	vmConfig := k.VMConfig(ctx, msg, cfg, tracer)
 
+	// 3.5 smart contract 생성(CREATE) 혹은 호출(CALL) 권한이 있는지 검사 - e.g 특정 주소만 Smart Contract 생성 가능하거나 호출 가능하도록 제한
 	signer := msg.From()
 	accessControl := types.NewRestrictedPermissionPolicy(&cfg.Params.AccessControl, signer)
 
-	// Set hooks for the EVM opcodes
+	// EVM opcode(CREATE, CALL) 실행 전후에 사용자 정의 로직 실행 가능
 	evmHooks := types.NewDefaultOpCodesHooks()
 	evmHooks.AddCreateHooks(
 		accessControl.GetCreateHook(signer),
@@ -67,6 +72,7 @@ func (k *Keeper) NewEVM(
 		accessControl.GetCallHook(signer),
 		k.GetPrecompilesCallHook(ctx),
 	)
+	// 3.6 EVM 인스턴스 생성
 	return vm.NewEVMWithHooks(evmHooks, blockCtx, txCtx, stateDB, cfg.ChainConfig, vmConfig)
 }
 
@@ -153,7 +159,11 @@ func (k *Keeper) ApplyTransaction(ctx sdk.Context, tx *ethtypes.Transaction) (*t
 	txConfig := k.TxConfig(ctx, tx.Hash())
 
 	// get the signer according to the chain rules from the config and block height
+	// 2.1 signer : EIP-155 Replay Attack 을 방지하기 위한 ChainID 추가와 그에 따른 서명 방식을 가져옴
 	signer := ethtypes.MakeSigner(cfg.ChainConfig, big.NewInt(ctx.BlockHeight()))
+	// 2.2 msg : 이더리움 코어 transaction type 에서 트랜잭션을 메시지로 변환
+	// 2.3 baseFee : 기본 수수료 0.1 gwei 를 feeMarketKeeper params 에서 가져옴
+	// 2.4 내부적으로 baseFee 와 사용자가 지정한 Tip 을 더해서 gasPrice 를 계산함 EIP1559 Gas 산정 방식
 	msg, err := tx.AsMessage(signer, cfg.BaseFee)
 	if err != nil {
 		return nil, errorsmod.Wrap(err, "failed to return ethereum transaction as core message")
@@ -162,9 +172,12 @@ func (k *Keeper) ApplyTransaction(ctx sdk.Context, tx *ethtypes.Transaction) (*t
 	// Create a cache context to revert state. The cache context is only committed when both tx and hooks executed successfully.
 	// Didn't use `Snapshot` because the context stack has exponential complexity on certain operations,
 	// thus restricted to be used only inside `ApplyMessage`.
+	// 2.5 StateDB 는 컨텍스트 기반 캐시 MultiStore 를 생성하여 상태를 롤백할 수 있게 함. 
+	// EVM 에서 State 관리를 위한 임시 저장소 개념
 	tmpCtx, commit := ctx.CacheContext()
 
 	// pass true to commit the StateDB
+	// 2.6 ApplyMessageWithConfig 함수를 호출하여 메시지를 실행하고 변경된 상태를 임시 StateDB 에 커밋 함.
 	res, err := k.ApplyMessageWithConfig(tmpCtx, msg, nil, true, cfg, txConfig)
 	if err != nil {
 		// when a transaction contains multiple msg, as long as one of the msg fails
@@ -272,9 +285,12 @@ func (k *Keeper) ApplyMessageWithConfig(
 		vmErr error  // vm errors do not effect consensus and are therefore not assigned to err
 	)
 
+	// 3.1 StateDB 는 컨텍스트 기반으로 상태 관리를 위한 임시 저장소
 	stateDB := statedb.New(ctx, k, txConfig)
+	// 3.2 EVM 인스턴스를 생성하여 이더리움 코어 메시지를 실행할 수 있게 함
 	evm := k.NewEVM(ctx, msg, cfg, tracer, stateDB)
 
+	// 4.1 msg 에서 가스 한도 가져와 leftoverGas 변수에 초기화 함
 	leftoverGas := msg.Gas()
 
 	// Allow the tracer captures the tx level events, mainly the gas consumption.
@@ -290,21 +306,24 @@ func (k *Keeper) ApplyMessageWithConfig(
 	contractCreation := msg.To() == nil
 	isLondon := cfg.ChainConfig.IsLondon(evm.Context.BlockNumber)
 
+	// 4.2 intrinsicGas 는 트랜잭션 실행에 필요한 최소 가스 양을 계산하는 함수 (트랜잭션 실행 전 계산)
 	intrinsicGas, err := k.GetEthIntrinsicGas(ctx, msg, cfg.ChainConfig, contractCreation)
 	if err != nil {
 		// should have already been checked on Ante Handler
 		return nil, errorsmod.Wrap(err, "intrinsic gas failed")
 	}
-
 	// Should check again even if it is checked on Ante Handler, because eth_call don't go through Ante Handler.
+    // 4.3 만약 Msg GasLimit 이 4.2 에서 계산된 가스보다 작으면 오류 발생
 	if leftoverGas < intrinsicGas {
 		// eth_estimateGas will check for this exact error
 		return nil, errorsmod.Wrap(core.ErrIntrinsicGas, "apply message")
 	}
+	// 4.4 Msg GasLimit 에서 내부 가스 계산한 값을 빼서 남은 가스를 leftoverGas 에 저장
 	leftoverGas -= intrinsicGas
 
 	// access list preparation is moved from ante handler to here, because it's needed when `ApplyMessage` is called
 	// under contexts where ante handlers are not run, for example `eth_call` and `eth_estimateGas`.
+	// 4.5 만약 Berlin 이후 블록이면 access list 를 준비하는데 EIP2929 에 정의된 대로 트랜잭션 실행되기 전 미리 데이터의 위치를 정의하여 가스 비용을 최적화 함.
 	if rules := cfg.ChainConfig.Rules(big.NewInt(ctx.BlockHeight()), cfg.ChainConfig.MergeNetsplitBlock != nil); rules.IsBerlin {
 		// The access list is prepared without any precompile because it is
 		// filled with only the recipient precompile address in the EVM'hook
@@ -312,10 +331,14 @@ func (k *Keeper) ApplyMessageWithConfig(
 		stateDB.PrepareAccessList(msg.From(), msg.To(), []common.Address{}, msg.AccessList())
 	}
 
+	// 4.6 만약 메시지가 컨트랙트를 생성하는 CREATE 메시지라면, 해당 Sender 의 Address 의 Nonce 를 조회하고, 
+	//EVM CREATE 를 한 이후 다시 Nonce 를 증가시켜 임시 StateDB 에 저장함
 	if contractCreation {
 		// take over the nonce management from evm:
 		// - reset sender's nonce to msg.Nonce() before calling evm.
 		// - increase sender's nonce by one no matter the result.
+		// 4.7 Nonce 를 임시 StateDB 에 저장하고 evm.Create 이후 다시 Nonce 를 1 증가시킵니다. 아마도, 다음 트랜잭션의 경우
+		// 이더리움 컨트랙트 주소체계가 Sender 주소와 nonce 로 이루어지기 때문에 중복되지 않게 하기 위해 이와 같은 방식을 사용하는 것 같음
 		stateDB.SetNonce(sender.Address(), msg.Nonce())
 		ret, _, leftoverGas, vmErr = evm.Create(sender, msg.Data(), leftoverGas, msg.Value())
 		stateDB.SetNonce(sender.Address(), msg.Nonce()+1)
@@ -323,9 +346,11 @@ func (k *Keeper) ApplyMessageWithConfig(
 		ret, leftoverGas, vmErr = evm.Call(sender, *msg.To(), msg.Data(), leftoverGas, msg.Value())
 	}
 
+	// 10.1 London 포크 이전 (50% 환불)
 	refundQuotient := params.RefundQuotient
 
 	// After EIP-3529: refunds are capped to gasUsed / 5
+	// 10.2 가스 환불 계산 -> 환불 가스 = (현재 가스 - 남은 가스, 사용가스) / 환불 비율 (20% 환불)
 	if isLondon {
 		refundQuotient = params.RefundQuotientEIP3529
 	}
@@ -339,6 +364,7 @@ func (k *Keeper) ApplyMessageWithConfig(
 	refund := GasToRefund(stateDB.GetRefund(), temporaryGasUsed, refundQuotient)
 
 	// update leftoverGas and temporaryGasUsed with refund amount
+	// 10.3 실행이후 남은 가스에 환불 가스를 더하고, 사용한 가스에서는 환불 가스를 빼줌
 	leftoverGas += refund
 	temporaryGasUsed -= refund
 
@@ -349,6 +375,7 @@ func (k *Keeper) ApplyMessageWithConfig(
 	}
 
 	// The dirty states in `StateDB` is either committed or discarded after return
+	// 10.4 커밋 여부 확인 후 StateDB 에 커밋 처리
 	if commit {
 		if err := stateDB.Commit(); err != nil {
 			return nil, errorsmod.Wrap(err, "failed to commit stateDB")
@@ -374,6 +401,7 @@ func (k *Keeper) ApplyMessageWithConfig(
 	// reset leftoverGas, to be used by the tracer
 	leftoverGas = msg.Gas() - gasUsed
 
+	// 10.5 최종 결과 반환
 	return &types.MsgEthereumTxResponse{
 		GasUsed: gasUsed,
 		VmError: vmError,

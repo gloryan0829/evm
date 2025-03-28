@@ -282,14 +282,18 @@ func runPrecompiledContract(
 	inputCopy := make([]byte, len(input))
 	copy(inputCopy, input)
 
+	// 9.1 Precompile 로 만들어진 컨트랙트를 생성하고 Input 으로 실제 실행할 함수의 Bytes 값을 contract.Input 에 저장
 	contract := NewPrecompile(caller, AccountRef(addrCopy), value, suppliedGas)
 	contract.Input = inputCopy
 
+	// 9.2 input 의 가스를 계산하여 남은 가스를 차감
 	gasCost := p.RequiredGas(input)
 	if !contract.UseGas(gasCost) {
 		return nil, contract.Gas, ErrOutOfGas
 	}
 
+	// 9.3 Precompile 로 만들어진 컨트랙트가 만약 ERC20 이라는 가정하에서 실행을 하겠음 
+	// precompiles/erc20/erc20.go Run 함수에서 실행
 	output, err := p.Run(evm, contract, readOnly)
 	return output, contract.Gas, err
 }

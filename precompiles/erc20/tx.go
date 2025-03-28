@@ -74,8 +74,10 @@ func (p *Precompile) transfer(
 	from, to common.Address,
 	amount *big.Int,
 ) (data []byte, err error) {
+	// 전송할 금액과 토큰의 명칭을 사용하여 sdk.Coins 객체를 생성
 	coins := sdk.Coins{{Denom: p.tokenPair.Denom, Amount: math.NewIntFromBigInt(amount)}}
 
+	// 9.9 Bank 모듈의 MsgSend 메시지를 생성하여, from 주소에서 to 주소로 코인을 전송
 	msg := banktypes.NewMsgSend(from.Bytes(), to.Bytes(), coins)
 
 	if err = msg.Amount.Validate(); err != nil {
@@ -90,9 +92,11 @@ func (p *Precompile) transfer(
 
 	var prevAllowance *big.Int
 	if ownerIsSpender {
+		// 9.10 ownerIsSpender가 참이면, MsgSend를 직접 실행하여 전송
 		msgSrv := bankkeeper.NewMsgServerImpl(p.BankKeeper)
 		_, err = msgSrv.Send(ctx, msg)
 	} else {
+		// 9.11 그렇지 않으면, AuthzKeeper를 사용하여 권한을 확인하고 전송을 실행
 		_, _, prevAllowance, err = GetAuthzExpirationAndAllowance(p.AuthzKeeper, ctx, spenderAddr, from, p.tokenPair.Denom)
 		if err != nil {
 			return nil, ConvertErrToERC20Error(errorsmod.Wrap(err, authz.ErrNoAuthorizationFound.Error()))
@@ -114,16 +118,17 @@ func (p *Precompile) transfer(
 			cmn.NewBalanceChangeEntry(to, convertedAmount, cmn.Add))
 	}
 
+	// 9.12 전송이 성공하면, 전송 이벤트를 발생시킴. 이는 EVM에서 이벤트 로그로 기록됨.
 	if err = p.EmitTransferEvent(ctx, stateDB, from, to, amount); err != nil {
 		return nil, err
 	}
 
-	// NOTE: if it's a direct transfer, we return here but if used through transferFrom,
-	// we need to emit the approval event with the new allowance.
+	// 9.13 만약 transferFrom 메서드가 아니라면, true 값을 바이트 배열로 반환
 	if !isTransferFrom {
 		return method.Outputs.Pack(true)
 	}
 
+	// 9.14 transferFrom 메서드의 경우, 새로운 approve amount 계산하고 승인 이벤트를 발생
 	var newAllowance *big.Int
 	if ownerIsSpender {
 		// NOTE: in case the spender is the owner we emit an approval event with

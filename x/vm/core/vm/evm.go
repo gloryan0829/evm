@@ -172,24 +172,31 @@ func (evm *EVM) WithInterpreter(interpreter Interpreter) {
 // parameters. It also handles any necessary value transfer required and takes
 // the necessary steps to create accounts and reverses the state in case of an
 // execution error or failed value transfer.
+// 8.1 컨트랙트 호출 할 때 addr 주소가 컨트랙트면 input 파라미터는 함수 호출을 하기 위한 4bytes 값이 들어올 가능성 있음
+// 만약 컨트랙트 주소가 To 가 아닐 경우는 Transfer 함수가 호출 될 수 있음. 함수 호출 에러나 Transfer 에러면 다시 state 가 원래대로 돌아감
 func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas uint64, value *big.Int) (ret []byte, leftOverGas uint64, err error) {
 	if err = evm.hooks.CallHook(evm, caller.Address(), addr); err != nil {
 		return nil, gas, err
 	}
 
 	// Fail if we're trying to execute above the call depth limit
+	// 8.2 컨트랙트 호출 시 최대 깊이 1024 제한 체크
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, gas, ErrDepth
 	}
 	// Fail if we're trying to transfer more than the available balance
+	// 8.3 Value 가 0이 아닐 때 Sender 의 Balance 가 Value 만큼 충분한지 확인
 	if value.Sign() != 0 && !evm.Context.CanTransfer(evm.StateDB, caller.Address(), value) {
 		return nil, gas, ErrInsufficientBalance
 	}
 
 	snapshot := evm.StateDB.Snapshot()
+	// 8.4 컨트랙트 호출 시 Precompile 로 만들어진 컨트랙트인지 체크
 	p, isPrecompile := evm.Precompile(addr)
 
+	// 8.5 컨트랙트 주소가 evm StateDB 에 존재하지 않을 시
 	if !evm.StateDB.Exist(addr) {
+		// 8.6 컨트랙트 주소가 Precompile 로 만들어진 것이 아니고, EIP158 이후 블록이고 Value 가 0이면 return 함
 		if !isPrecompile && evm.chainRules.IsEIP158 && value.Sign() == 0 {
 			// Calling a non existing account, don't do anything, but ping the tracer
 			if evm.Config.Debug {
@@ -203,8 +210,10 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			}
 			return nil, gas, nil
 		}
+		// 어떤 케이스지????! 
 		evm.StateDB.CreateAccount(addr)
 	}
+	// 8.7 Sender 가 컨트랙트로 토큰을 전달 함
 	evm.Context.Transfer(evm.StateDB, caller.Address(), addr, value)
 
 	// Capture the tracer start/end events in debug mode
@@ -225,10 +234,12 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 
 	// It is allowed to call precompiles, even via call -- as opposed to callcode, staticcall and delegatecall it can also modify state
 	if isPrecompile {
+		// 8.8 Precompile 로 만들어진 컨트랙트 호출 시 컨트랙트 실행 (ReadOnly = false)
 		ret, gas, err = evm.RunPrecompiledContract(p, caller, input, gas, value, false)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
+		// 8.9 컨트랙트 주소가 Precompile 로 만들어진 것이 아니면 컨트랙트를 Address Key 값으로 Code 를 StateDB 에서 가져와 생성함
 		code := evm.StateDB.GetCode(addr)
 		if len(code) == 0 {
 			ret, err = nil, nil // gas is unchanged
@@ -238,6 +249,8 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			// The depth-check is already done, and precompiles handled above
 			contract := NewContract(caller, AccountRef(addrCopy), value, gas)
 			contract.SetCallCode(&addrCopy, evm.StateDB.GetCodeHash(addrCopy), code)
+			// 8.10 evm interpreter 에서 컨트랙트 실행 (실행 과정은 Contract Creation 시 설명했기 때문에 생략함)
+			// 최종적으로 실행한 bytes[] 를 받게 됨
 			ret, err = evm.interpreter.Run(contract, input, false)
 			gas = contract.Gas
 		}
@@ -432,19 +445,25 @@ func (c *codeAndHash) Hash() common.Hash {
 func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64, value *big.Int, address common.Address, typ OpCode) ([]byte, common.Address, uint64, error) {
 	// Depth check execution. Fail if we're trying to execute above the
 	// limit.
+	// 5.3 컨트랙트 생성 시 최대로 컨트랙트 Call 할 수 있는 Stack 의 깊이 제한을 1024 로 제한함
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, common.Address{}, gas, ErrDepth
 	}
+	// 5.4 컨트랙트 생성 시 컨트랙트 생성자의 잔고가 충분한지 확인
 	if !evm.Context.CanTransfer(evm.StateDB, caller.Address(), value) {
 		return nil, common.Address{}, gas, ErrInsufficientBalance
 	}
+	// 5.5 컨트랙트 생성 시 Sender 의 Nonce 가 증가할 때 오버플로우 방지를 위한 코드
 	nonce := evm.StateDB.GetNonce(caller.Address())
 	if nonce+1 < nonce {
 		return nil, common.Address{}, gas, ErrNonceUintOverflow
 	}
+	// 5.6 컨트랙트 생성 시 실행중 상태의 Sender의 Nonce 를 증가시킴
 	evm.StateDB.SetNonce(caller.Address(), nonce+1)
 	// We add this to the access list _before_ taking a snapshot. Even if the creation fails,
 	// the access-list change should not be rolled back
+	// 5.7 만약 Berlin 이후 블록이면 access list 를 준비하는데 EIP2929 로 
+	// 컨트랙트 생성 실패가 되더라도 이미 해당 주소는 access list 에 추가되어있기 때문에 가스비를 아낄 수 있음
 	if evm.chainRules.IsBerlin {
 		evm.StateDB.AddAddressToAccessList(address)
 	}
@@ -454,11 +473,15 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		return nil, common.Address{}, 0, ErrContractAddressCollision
 	}
 	// Create a new account on the state
+	// 5.8 컨트랙트 생성 이후 컨트랙트 주소의 Nonce 를 1로 설정함 
+	// (나중에 컨트랙트 을 통해 컨트랙트 생성할 때 주소를 만들기 위한 nonce 가 필요함)
 	snapshot := evm.StateDB.Snapshot()
 	evm.StateDB.CreateAccount(address)
 	if evm.chainRules.IsEIP158 {
 		evm.StateDB.SetNonce(address, 1)
 	}
+	// 5.9 컨트랙트 생성 시 Sender 가 Contract 에 Value 즉 토큰을 전달함. 
+	// StateDB 에 Balance 가 SUB (SenderAddress) -> ADD (ContractAddress) 됨
 	evm.Context.Transfer(evm.StateDB, caller.Address(), address, value)
 
 	// Initialise a new contract and set the code that is to be used by the EVM.
@@ -475,7 +498,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	}
 
 	start := time.Now()
-
+	// 5.10 컨트랙트 생성 시 EVM Interperter 에서 컨트랙트 코드를 실행함
 	ret, err := evm.interpreter.Run(contract, nil, false)
 
 	// Check whether the max code size has been exceeded, assign err if the case.
@@ -492,8 +515,9 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	// calculate the gas required to store the code. If the code could not
 	// be stored due to not enough gas set an error and let it be handled
 	// by the error checking condition below.
+	// 7.1 컨트랙트 생성이 정상적으로 성공할 경우 코드 저장 비용 계산
 	if err == nil {
-		createDataGas := uint64(len(ret)) * params.CreateDataGas
+		createDataGas := uint64(len(ret)) * params.CreateDataGas // 7.2 컨트랙트 생성 시 코드 저장 비용 계산 200 Gas 씀
 		if contract.UseGas(createDataGas) {
 			evm.StateDB.SetCode(address, ret)
 		} else {
@@ -526,7 +550,9 @@ func (evm *EVM) Create(caller ContractRef, code []byte, gas uint64, value *big.I
 	if err = evm.hooks.CreateHook(evm, caller.Address()); err != nil {
 		return nil, common.Address{}, gas, err
 	}
+	// 5.1 컨트랙트 생성 주소 계산 Nonce 와 Sender 의 주소로 contract address 를 만듬
 	contractAddr = crypto.CreateAddress(caller.Address(), evm.StateDB.GetNonce(caller.Address()))
+	// 5.2 컨트랙트 생성을 실제 실행하는데 msg 에서 전달된 Code 와 가스, 토큰 전송량, 컨트랙트 주소, opcode 를 전달
 	return evm.create(caller, &codeAndHash{code: code}, gas, value, contractAddr, CREATE)
 }
 

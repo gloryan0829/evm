@@ -529,7 +529,7 @@ func opSload(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]by
 	loc.SetBytes(val.Bytes())
 	return nil, nil
 }
-
+// 6.17 상태를 변경 시 해당 STORE OpCode 함수가 실행되며, arg 로 ScopeContext 를 받아 상태 변경 처리
 func opSstore(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
 	if interpreter.readOnly {
 		return nil, ErrWriteProtection
