@@ -130,7 +130,6 @@ func (k Keeper) GetHashFn(ctx sdk.Context) vm.GetHashFunc {
 // only be persisted (committed) to the underlying KVStore if the transaction does not fail.
 //
 // # Gas tracking
-//
 // Ethereum consumes gas according to the EVM opcodes instead of general reads and writes to store. Because of this, the
 // state transition needs to ignore the SDK gas consumption mechanism defined by the GasKVStore and instead consume the
 // amount of gas used by the VM execution. The amount of gas used is tracked by the EVM and returned in the execution
@@ -143,6 +142,7 @@ func (k Keeper) GetHashFn(ctx sdk.Context) vm.GetHashFunc {
 // returning.
 //
 // For relevant discussion see: https://github.com/cosmos/cosmos-sdk/discussions/9072
+// 코스모스 SDK 가스 정책을 무시하고 EVM 의 가스 소모 정책을 따른다. 그래서 EVM 안에서 가스가 소모되는 부분을 코스모스에서 어떻게 차감하는지가 중요함
 func (k *Keeper) ApplyTransaction(ctx sdk.Context, tx *ethtypes.Transaction) (*types.MsgEthereumTxResponse, error) {
 	var bloom *big.Int
 
@@ -159,9 +159,10 @@ func (k *Keeper) ApplyTransaction(ctx sdk.Context, tx *ethtypes.Transaction) (*t
 		return nil, errorsmod.Wrap(err, "failed to return ethereum transaction as core message")
 	}
 
-	// Create a cache context to revert state. The cache context is only committed when both tx and hooks executed successfully.
-	// Didn't use `Snapshot` because the context stack has exponential complexity on certain operations,
-	// thus restricted to be used only inside `ApplyMessage`.
+	// 상태를 되돌리기 위한 캐시 컨텍스트를 생성합니다. 
+	// 캐시 컨텍스트는 트랜잭션과 훅이 모두 성공적으로 실행되었을 때만 커밋됩니다.
+	// `Snapshot`을 사용하지 않은 이유는 컨텍스트 스택이 특정 작업에서 지수 복잡도를 가지기 때문입니다.
+	// 따라서 `ApplyMessage` 내부에서만 사용되도록 제한됩니다.
 	tmpCtx, commit := ctx.CacheContext()
 
 	// pass true to commit the StateDB

@@ -36,21 +36,25 @@ type StateDB struct {
 	ctx    sdk.Context
 	// cacheCtx is used on precompile calls. It allows to commit the current journal
 	// entries to get the updated state in for the precompile call.
+	// Precompile 호출용 캐시 컨텍스트
 	cacheCtx sdk.Context
 	// writeCache function contains all the changes related to precompile calls.
+	// Precompile 호출에 대한 모든 변경 사항을 포함하는 함수
 	writeCache func()
 
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
+	// 상태 변경 이력을 관리하는 것 -> 저널 (스냅샷을 기준으로 롤백이 가능함)
 	journal        *journal
 	validRevisions []revision
 	nextRevisionID int
 
-	stateObjects map[common.Address]*stateObject
+	stateObjects map[common.Address]*stateObject // 계정 상태에 대한 stateObject 저장소
 
 	txConfig TxConfig
 
 	// The refund counter, also used by state transitioning.
+	// Gas Refund 카운터	
 	refund uint64
 
 	// Per-transaction logs
