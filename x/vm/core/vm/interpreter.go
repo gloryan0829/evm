@@ -126,6 +126,7 @@ func (in *EVMInterpreter) SetReturnData(data []byte) {
 // It's important to note that any errors returned by the interpreter should be
 // considered a revert-and-consume-all-gas operation except for
 // ErrExecutionReverted which means revert-and-keep-gas-left.
+
 func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (ret []byte, err error) {
 	// Increment the call depth which is restricted to 1024
 	in.evm.depth++
@@ -199,18 +200,25 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		}
 		// Get the operation from the jump table and validate the stack to ensure there are
 		// enough stack items available to perform the operation.
+
+		// (1) 현재 컨트랙트 코드의 ByteCode Array 를 기준으로 실행할 OpCode 를 Index(PC) 로 가져옴
 		op = contract.GetOp(pc)
+		// (2) 해당 OpCode Key 에 대한 Operation(작동 가능한) 함수를 JumpTable map 에서 가져옴
 		operation := in.cfg.JumpTable[op]
+		// (3) 해당 OpCode 실행에 대한 Gas 비용을 가져옴
 		cost = operation.constantGas // For tracing
-		// Validate stack
+		// (4) 해당 OpCode 실행에 대한 Stack 길이 체크
 		if sLen := stack.Len(); sLen < operation.minStack {
 			return nil, &ErrStackUnderflow{stackLen: sLen, required: operation.minStack}
 		} else if sLen > operation.maxStack {
 			return nil, &ErrStackOverflow{stackLen: sLen, limit: operation.maxStack}
 		}
+		// (5) 해당 OpCode 실행에 대한 Gas 를 소모하고 부족하면 ErrOutOfGas 반환
 		if !contract.UseGas(cost) {
 			return nil, ErrOutOfGas
 		}
+		// (6) 해당 OpCode 실행에 (3) 상수로 정의된 Gas 이외에 동적으로 계산된 Gas 를 함수로 구하고 가져옴
+		// 이 부분은 데이터의 길이에 따라 동적으로 가스 비용이 계산되는 형태임
 		if operation.dynamicGas != nil {
 			// All ops with a dynamic memory usage also has a dynamic gas cost.
 			var memorySize uint64
@@ -231,9 +239,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			}
 			// Consume the gas and return an error if not enough gas is available.
 			// cost is explicitly set so that the capture state defer method can get the proper cost
+			// (7) 동적으로 계산된 Gas 를 함수로 구하고 가져옴. 동적 계산에 필요한 주요한 변수는 mem, memorySize, stack 임
 			var dynamicCost uint64
 			dynamicCost, err = operation.dynamicGas(in.evm, contract, stack, mem, memorySize)
 			cost += dynamicCost // for tracing
+			// (8) 동적으로 계산된 Gas 를 소모하고 부족하면 ErrOutOfGas 반환
 			if err != nil || !contract.UseGas(dynamicCost) {
 				return nil, ErrOutOfGas
 			}
@@ -249,11 +259,13 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			in.cfg.Tracer.CaptureState(pc, op, gasCopy, cost, callContext, in.returnData, in.evm.depth, err)
 			logged = true
 		}
-		// execute the operation
+		// (9) [핵심] OpCode 실행에 대한 실제 작동 함수 실행
 		res, err = operation.execute(&pc, in, callContext)
+		// (10) 해당 OpCode 실행에 대한 오류 발생시 중단. 단, "stop token" 에러는 실제 에러는 아님
 		if err != nil {
 			break
 		}
+		// (11) Contract Code Bytes Array 의 다음 Operation 을 가져오기 위해 Index(PC) 증가
 		pc++
 	}
 

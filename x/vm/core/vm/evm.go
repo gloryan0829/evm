@@ -187,6 +187,8 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 
 	snapshot := evm.StateDB.Snapshot()
+	// Caller 가 지정한 대상 Address 가 Precompile 인지 확인함
+	// 해당 여부에 따라 Interpreter 에서 실행을 주도할 것인지 아니면 PrecompiledContract 에서 실행할 것인지 결정하게 됨
 	p, isPrecompile := evm.Precompile(addr)
 
 	if !evm.StateDB.Exist(addr) {
@@ -223,7 +225,8 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		}
 	}
 
-	// It is allowed to call precompiles, even via call -- as opposed to callcode, staticcall and delegatecall it can also modify state
+	// Precompiled Contract 를 Caller 가 Run 할 수 있게 할 거냐 아니면 일반 컨트랙트를 Run 할 거냐가 결정 되는 것이
+	// 주요 포인트임
 	if isPrecompile {
 		ret, gas, err = evm.RunPrecompiledContract(p, caller, input, gas, value, false)
 	} else {
@@ -295,8 +298,8 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 		ret, gas, err = evm.RunPrecompiledContract(p, caller, input, gas, value, true)
 	} else {
 		addrCopy := addr
-		// Initialise a new contract and set the code that is to be used by the EVM.
-		// The contract is a scoped environment for this execution context only.
+		// Call 함수 로직과 다르게 컨트랙트 생성 시 Caller 의 주소를 2번 째 arg 로 넘기고 있음
+		// 호출자의 컨텍스트로 실행됨
 		contract := NewContract(caller, AccountRef(caller.Address()), value, gas)
 		contract.SetCallCode(&addrCopy, evm.StateDB.GetCodeHash(addrCopy), evm.StateDB.GetCode(addrCopy))
 		ret, err = evm.interpreter.Run(contract, input, false)
@@ -340,7 +343,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 		ret, gas, err = evm.RunPrecompiledContract(p, caller, input, gas, nil, true)
 	} else {
 		addrCopy := addr
-		// Initialise a new contract and make initialise the delegate values
+		// 호출하는 Caller 의 컨텍스트로 실행하고, Value 는 nil 로 설정
 		contract := NewContract(caller, AccountRef(caller.Address()), nil, gas).AsDelegate()
 		contract.SetCallCode(&addrCopy, evm.StateDB.GetCodeHash(addrCopy), evm.StateDB.GetCode(addrCopy))
 		ret, err = evm.interpreter.Run(contract, input, false)
