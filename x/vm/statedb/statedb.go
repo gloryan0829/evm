@@ -32,22 +32,35 @@ var _ vm.StateDB = &StateDB{}
 // * Contracts
 // * Accounts
 type StateDB struct {
+	// (1) Cosmos Keeper 구조체로 모듈간의 상태관리를 담당함. 
+	// Geth 는 Database 를 사용하지만 Cosmos 는 Keeper 를 사용함.
 	keeper Keeper
+	// (2) 트랜잭션 실행을 위한 Cosmos SDK Context 저장소를 활용함. 
+	// Geth 는 trie, database 로 직접 접근 관리함
 	ctx    sdk.Context
 	// cacheCtx is used on precompile calls. It allows to commit the current journal
 	// entries to get the updated state in for the precompile call.
+	// (3) 해당 cacheContext 는 프리컴파일 호출 중 발생하는 상태 변경 처리를 위해 사용됨
+	// Geth 는 Precompile 호출 시 상태 관리가 필요하지 않으므로 별도로 관리하지 않음
 	cacheCtx sdk.Context
 	// writeCache function contains all the changes related to precompile calls.
+	// (4) 해당 writeCache 함수는 Precompile 호출 중 발생하는 상태 변경 사항을 적용하기 위해 사용됨
+	// Geth 는 Precompile 상태와 무관하지만 최적화를 위해 snap 과 triePrefetcher 캐싱 전략으로 최적화함
 	writeCache func()
 
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
+	// (5) State Transition 의 변경 이력을 롤백 및 복구하기 위한 용도로 Geth 도 동일한 구조임
 	journal        *journal
 	validRevisions []revision
 	nextRevisionID int
 
+	// (6) 현재 트랜잭션에서 접근된 Account 의 상태를 변경하기 위한 것으로 dirty state 를 관리함
+	// Geth 도 동일하지만 해당 stateObjects 가 세분화 되어 관리되고 있음 Dirty, Pending 등
 	stateObjects map[common.Address]*stateObject
 
+	// (7) 트랜잭션 Block Hash, Tx Hash, Tx Index, Log Index 를 관리하기 위한 용도
+	// Geth 도 동일한 구조로 originalRoot, thash, TxIndex, LogIndex 를 관리함
 	txConfig TxConfig
 
 	// The refund counter, also used by state transitioning.
@@ -59,6 +72,8 @@ type StateDB struct {
 	// Per-transaction access list
 	accessList *accessList
 
+	// (8) 현재 트랜잭션에서 호출된 Precompile 의 호출 횟수를 카운트하기 위한 용도
+	// Geth 는 해당 카운터를 사용하지 않음
 	// The count of calls to precompiles
 	precompileCallsCounter uint8
 }
